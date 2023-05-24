@@ -1,0 +1,62 @@
+cabal-version: 3.0
+
+name:           sway-ipc
+version:        0.1.0.0
+copyright:      Konrad Tegtmeier
+license:        BSD-2-Clause
+build-type:     Simple
+
+source-repository head
+  type: git
+
+common shared-properties
+  default-language: GHC2021
+  default-extensions:
+    BlockArguments
+    DuplicateRecordFields
+    OverloadedRecordDot
+    OverloadedStrings
+
+  ghc-options:
+    -Weverything
+    -Wno-all-missed-specialisations
+    -Wno-missing-deriving-strategies
+    -Wno-implicit-prelude
+    -Wno-missing-import-lists
+    -Wno-missing-kind-signatures
+    -Wno-missing-safe-haskell-mode
+    -Wno-unsafe
+    -Werror=incomplete-patterns
+    -Werror=missing-fields
+    -Werror=missing-home-modules
+    -Werror=missing-methods
+
+library
+  import: shared-properties
+  exposed-modules:
+    Network.Sway.IPC
+  other-modules:
+  build-depends:
+    base,
+    aeson,
+    binary,
+    bytestring,
+    containers,
+    network,
+    stm,
+    text,
+  hs-source-dirs:
+    src
+
+executable sway-ipc
+  import: shared-properties
+  ghc-options:
+    -threaded
+    -rtsopts
+    "-with-rtsopts=-N"
+  build-depends:
+    base,
+    sway-ipc,
+  hs-source-dirs:
+    app
+  main-is: Main.hs
