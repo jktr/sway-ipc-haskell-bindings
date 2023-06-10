@@ -1,6 +1,5 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE FunctionalDependencies #-}
-{-# LANGUAGE GADTs #-}
 
 module Network.Sway.IPC (
   Client,
@@ -140,8 +139,7 @@ class Command a b | a -> b where
   encodePayload :: a -> BSL.ByteString
   decodePayload :: BSL.ByteString -> Either String b
 
-data Result a where
-  Result :: A.FromJSON a => (Either String a) -> Result a
+data Result a = A.FromJSON a => Result (Either String a)
 
 instance A.FromJSON a => A.FromJSON (Result a) where
   parseJSON x@(A.Object o) = do
