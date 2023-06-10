@@ -18,7 +18,7 @@ module Network.Sway.IPC (
 ) where
 
 import Control.Concurrent (ThreadId, forkIO, killThread)
-import Control.Concurrent.STM (STM, TVar, TMVar)
+import Control.Concurrent.STM (STM, TVar)
 import Control.Concurrent.STM qualified as STM
 import Control.Exception (bracketOnError, Exception)
 import Control.Exception qualified as STM
@@ -46,7 +46,7 @@ import System.Environment (getEnv)
 
 data Client = Client
   { socket :: Socket
-  , commands :: TVar (Map CommandType (TMVar BSL.ByteString))
+  , commands :: TVar (Map CommandType (Maybe BSL.ByteString))
   , callbacks :: TVar (Map EventType [EventCallback])
   , recvThread :: ThreadId
   }
@@ -209,11 +209,7 @@ stopClient ipc = do
   S.close ipc.socket
   STM.atomically do
     STM.modifyTVar ipc.callbacks $ const Map.empty
-
-    -- abort pending commands with decode failure
-    commands <- STM.readTVar ipc.commands
-    STM.modifyTVar ipc.commands $ const Map.empty
-    forM_ commands $ \x -> STM.putTMVar x BSL.empty
+    STM.modifyTVar ipc.commands $ fmap (const (Just BSL.empty))
 
 startClient :: IO Client
 startClient = getEnv "SWAYSOCK" >>= startClient'
@@ -263,18 +259,15 @@ data IpcException
 
 instance Exception IpcException
 
-registerCommand :: Client -> CommandType -> STM (TMVar BSL.ByteString)
+registerCommand :: Client -> CommandType -> STM ()
 registerCommand ipc cmdType = do
-  promise :: TMVar BSL.ByteString <- STM.newEmptyTMVar
   commands <- Map.lookup cmdType <$> STM.readTVar ipc.commands
   case commands of
-    Nothing -> STM.modifyTVar ipc.commands $ Map.insert cmdType promise
+    Nothing -> STM.modifyTVar ipc.commands $ Map.insert cmdType Nothing
     _ -> STM.throwSTM ConcurrentCommand
-  pure promise
 
 unregisterCommand :: Client -> CommandType -> STM ()
-unregisterCommand ipc cmdType = do
-  STM.modifyTVar ipc.commands $ Map.delete cmdType
+unregisterCommand ipc cmdType = STM.modifyTVar ipc.commands $ Map.delete cmdType
 
 registerCallback :: Client -> EventType -> EventCallback -> STM ()
 registerCallback ipc eventType callback = do
@@ -283,12 +276,11 @@ registerCallback ipc eventType callback = do
 
 recvCommandMessage :: Client -> CommandType -> BSL.ByteString -> STM ()
 recvCommandMessage ipc cmdType payload = do
-  command <- Map.lookup cmdType <$> STM.readTVar ipc.commands
+  command :: Maybe (Maybe BSL.ByteString) <- Map.lookup cmdType <$> STM.readTVar ipc.commands
   case command of
+    Just Nothing -> STM.modifyTVar ipc.commands $ Map.insert cmdType (Just payload)
+    Just (Just _) -> STM.retry
     Nothing -> STM.throw OrphanCommand
-    Just x -> do
-      STM.putTMVar x payload
-      STM.modifyTVar ipc.commands $ Map.delete cmdType
 
 recvEventMessage :: Client -> EventType -> BSL.ByteString -> IO ()
 recvEventMessage ipc eventType payload = do
@@ -314,18 +306,19 @@ runCommand' ipc cmd onResult = do
     cmdType = getCommandType cmd
     message = BP.runPut $ encodeMessage (commandTypeToId cmdType) (encodePayload cmd)
 
-  promise :: TMVar BSL.ByteString <- STM.atomically $ registerCommand ipc cmdType
+  STM.atomically $ registerCommand ipc cmdType
   S.sendAll ipc.socket $ BSL.toStrict message
 
-  reply :: Either String b <- STM.atomically $ handleCommandResult cmdType promise
+  reply :: Either String b <- STM.atomically $ handleCommandResult cmdType
   either fail pure reply
 
   where
-    handleCommandResult :: CommandType -> TMVar BSL.ByteString -> STM (Either String b)
-    handleCommandResult cmdType promise = do
-      reply <- STM.readTMVar promise
+    handleCommandResult :: CommandType -> STM (Either String b)
+    handleCommandResult cmdType = do
+      reply :: Maybe BSL.ByteString <- Map.findWithDefault Nothing cmdType <$> STM.readTVar ipc.commands
+      reply' <- maybe STM.retry pure reply
       unregisterCommand ipc cmdType
-      let decoded :: Either String b = decodePayload @a reply
+      let decoded :: Either String b = decodePayload @a reply'
       mapM_ onResult decoded
       pure decoded
 
