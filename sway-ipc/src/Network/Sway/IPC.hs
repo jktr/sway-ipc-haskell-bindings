@@ -135,7 +135,7 @@ commandTypeToId (QueryCommandType GetInputs)       = 100
 commandTypeToId (QueryCommandType GetSeats)        = 101
 
 
-class (Show a, Show b) => Command a b | a -> b where
+class Command a b | a -> b where
   getCommandType :: a -> CommandType
   encodePayload :: a -> BSL.ByteString
   decodePayload :: BSL.ByteString -> Either String b
@@ -143,7 +143,7 @@ class (Show a, Show b) => Command a b | a -> b where
 data Result a where
   Result :: A.FromJSON a => (Either String a) -> Result a
 
-instance forall a. A.FromJSON a => A.FromJSON (Result a) where
+instance A.FromJSON a => A.FromJSON (Result a) where
   parseJSON x@(A.Object o) = do
     success <- o .:? "success" .!= True
     if success
